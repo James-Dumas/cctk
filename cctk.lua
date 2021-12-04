@@ -1,33 +1,35 @@
-local function sum(...)
-    local result = 0
-    for i, v in ipairs(arg) do
-        result = result + v
-    end
-
-    return result
-end
-
-local function wrap_text(text, width)
-    local lines = {}
-    local line = ""
-    local prev_space = ""
-    for word, space in string.gmatch(text, "(%S*)(%s*)") do
-        if #line + #word + 1 > width then
-            table.insert(lines, line:sub(1, -prev_space:len() - 1))
-            line = word .. space
-        else
-            line = line .. word .. space
+local util = {
+    sum = function(...)
+        local result = 0
+        for i, v in ipairs(arg) do
+            result = result + v
         end
 
-        prev_space = space
-    end
+        return result
+    end,
 
-    if #line > 0 then
-        table.insert(lines, line:sub(1, -prev_space:len() - 1))
-    end
+    wrap_text = function(text, width)
+        local lines = {}
+        local line = ""
+        local prev_space = ""
+        for word, space in string.gmatch(text, "(%S*)(%s*)") do
+            if #line + #word + 1 > width then
+                table.insert(lines, line:sub(1, -prev_space:len() - 1))
+                line = word .. space
+            else
+                line = line .. word .. space
+            end
 
-    return lines
-end
+            prev_space = space
+        end
+
+        if #line > 0 then
+            table.insert(lines, line:sub(1, -prev_space:len() - 1))
+        end
+
+        return lines
+    end,
+}
 
 local colors = {
     white = "0",
@@ -36,7 +38,10 @@ local colors = {
     light_blue = "3",
     yellow = "4",
     lime = "5",
+    lime_green = "5",
+    light_green = "5",
     pink = "6",
+    light_red = "6",
     gray = "7",
     grey = "7",
     light_gray = "8",
@@ -64,6 +69,9 @@ function GUI:init(widget)
     -- initialize GUI with given widget as root
     widget.fill_mode = "full"
     widget.visible = true
+    if widget.bg_color == nil then
+        widget.bg_color = colors.black
+    end
     self.root = widget
     term.setCursorBlink(false)
     term.clear()
@@ -231,6 +239,14 @@ function Widget:new()
     return o
 end
 
+function Widget:update_size_want()
+    -- recalculate wanted size for the widget
+    self.size_want = {
+        w = 0,
+        h = 0,
+    }
+end
+
 function Widget:update_rect(available_rect)
     -- update widget rect based on available space and fill mode
 
@@ -325,9 +341,16 @@ function Widget:set_bg_color(bg_color)
     end
 end
 
+function Widget:is_focused()
+    return GUI.focused == self
+end
+
 function Widget:set_focused()
     -- set this widget as focused
     -- if it is not visible, then set no widget as focused
+    if self:is_focused() then
+        return
+    end
 
     if self.visible then
         if GUI.focused and GUI.focused.on_lose_focus then
@@ -342,10 +365,6 @@ function Widget:set_focused()
     else
         GUI.focused = nil
     end
-end
-
-function Widget:is_focused()
-    return GUI.focused == self
 end
 
 function Widget:get_widget_by_pos(x, y)
@@ -386,7 +405,6 @@ function Frame:new()
 end
 
 function Frame:update_size_want()
-    -- recalculate wanted size for the widget
     if self.child then
         self.child:update_size_want()
         self.size_want.w = self.child.size_want.w + self.padding.left + self.padding.right
@@ -540,12 +558,12 @@ function Grid:update_rect(available_rect)
     }
 
     for i, weight in ipairs(self.weights.rows) do
-        local weight_norm = weight / sum(unpack(self.weights.rows))
+        local weight_norm = weight / util.sum(unpack(self.weights.rows))
         cell_sizes.rows[i] = self.size_want.row_widths[i] + math.floor(extra_space.h * weight_norm + 0.5)
     end
 
     for i, weight in ipairs(self.weights.cols) do
-        local weight_norm = weight / sum(unpack(self.weights.cols))
+        local weight_norm = weight / util.sum(unpack(self.weights.cols))
         cell_sizes.cols[i] = self.size_want.col_widths[i] + math.floor(extra_space.w * weight_norm + 0.5)
     end
 
@@ -555,8 +573,8 @@ function Grid:update_rect(available_rect)
             key = x .. "." .. y
             if self.grid[key] then
                 local child_rect = {
-                    x = self.rect.x + self.padding.left + sum(unpack(cell_sizes.cols, 1, x - 1)),
-                    y = self.rect.y + self.padding.top + sum(unpack(cell_sizes.rows, 1, y - 1)),
+                    x = self.rect.x + self.padding.left + util.sum(unpack(cell_sizes.cols, 1, x - 1)),
+                    y = self.rect.y + self.padding.top + util.sum(unpack(cell_sizes.rows, 1, y - 1)),
                     w = cell_sizes.cols[x],
                     h = cell_sizes.rows[y],
                 }
@@ -689,7 +707,7 @@ function Text:update_rect(available_rect)
         self.text_changed = false
         GUI.resize = true
         if self.wrapping and self.text:len() + self.padding.left + self.padding.right > available_rect.w then
-            self.wrapped_text = wrap_text(self.text, available_rect.w - self.padding.left - self.padding.right)
+            self.wrapped_text = util.wrap_text(self.text, available_rect.w - self.padding.left - self.padding.right)
         else
             self.wrapped_text = nil
         end
@@ -871,6 +889,7 @@ function Input:set_box_width(width)
     if self.box_width ~= width then
         self.box_width = width
         GUI.resize = true
+        self:set_cursor_index()
     end
 end
 
@@ -891,7 +910,7 @@ end
 return {
     colors = colors,
     colours = colors,
-
+    util = util,
     GUI = GUI,
     Widget = Widget,
     Frame = Frame,
