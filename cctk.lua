@@ -824,12 +824,20 @@ function Input:handle_event(event, ...)
         if event == "key" then
             local key = ...
             if key == keys.backspace then
+                local oldText = self.text
                 self.text = self.text:sub(1, math.max(0, self.cursor_index - 2)) .. self.text:sub(self.cursor_index)
                 self:set_cursor_index(self.cursor_index - 1)
                 GUI.redraw = true
+                if self.text ~= oldText and self.on_change then
+                    self:on_change(oldText)
+                end
             elseif key == keys.delete then
+                local oldText = self.text
                 self.text = self.text:sub(1, self.cursor_index - 1) .. self.text:sub(self.cursor_index + 1)
                 GUI.redraw = true
+                if self.text ~= oldText and self.on_change then
+                    self:on_change(oldText)
+                end
             elseif key == keys.left then
                 self:set_cursor_index(self.cursor_index - 1)
             elseif key == keys.right then
@@ -841,9 +849,13 @@ function Input:handle_event(event, ...)
 
         if event == "char" then
             local char = ...
+            local oldText = self.text
             self.text = self.text:sub(1, self.cursor_index - 1) .. char .. self.text:sub(self.cursor_index)
             self:set_cursor_index(self.cursor_index + 1)
             GUI.redraw = true
+            if self.on_change then
+                self:on_change(oldText)
+            end
         end
     end
 end
