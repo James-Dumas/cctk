@@ -1,9 +1,14 @@
-cctk = require("cctk")
+-- Example of responsiveness.
+-- Enter text into the input widget, and the text widget will display the text,
+-- automatically wrapping it and resizing the container as needed.
+
+os.loadAPI("cctk/cctk")
 
 -- text widget
 local text = cctk.Text:new("Hello World!")
 text.bg_color = cctk.colors.blue
 text.text_align = "left"
+text.visible = false
 text.padding = {
     left = 2,
     right = 2,
@@ -23,7 +28,7 @@ text_frame.padding = {
 }
 
 -- text input widget
-local input = cctk.Input:new(nil, "type something", 20)
+local input = cctk.Input:new(nil, "Type Something Here...", 30)
 input.h_align = "left"
 
 -- frame to contain the input widget
@@ -32,17 +37,17 @@ input_frame.fill_mode = "full"
 input_frame.bg_color = cctk.colors.green
 input_frame.padding = {
     left = 3,
-    right = 1,
+    right = 3,
     top = 1,
     bottom = 1
 }
 
--- this function will run on the text widget every tick
-function text:on_tick()
-    -- set text widget visible if text is entered
-    self:set_visible(input.text:len() > 0)
-    -- set text widget text to input widget text
-    self:set_text(input.text)
+-- this function will run when the input text is changed
+function input:on_change()
+    -- set text widget visible if input is not empty
+    text:set_visible(input.text:len() > 0)
+    -- set text widget's text to input widget's text
+    text:set_text(input.text)
 end
 
 -- add widgets to their frames

@@ -1,7 +1,8 @@
-local util = {
+util = {
     sum = function(...)
+        local args = table.pack(...)
         local result = 0
-        for i, v in ipairs(arg) do
+        for i, v in ipairs(args) do
             result = result + v
         end
 
@@ -31,7 +32,7 @@ local util = {
     end,
 }
 
-local colors = {
+colors = {
     white = "0",
     orange = "1",
     magenta = "2",
@@ -55,7 +56,9 @@ local colors = {
     black = "f",
 }
 
-local GUI = {
+colours = colors
+
+GUI = {
     render = {
         buf_back = {},
         buf_front = {},
@@ -205,7 +208,7 @@ function GUI.render:clear()
 end
 
 -- Base Widget class
-local Widget = {
+Widget = {
     visible = true,
     fill_mode = "none",
     h_align = "center",
@@ -394,7 +397,7 @@ function Widget:handle_event(event, ...)
     end
 end
 
-local Frame = Widget:new()
+Frame = Widget:new()
 Frame.__index = Frame
 
 function Frame:new()
@@ -489,7 +492,7 @@ function Frame:remove_child()
     GUI.resize = true
 end
 
-local Grid = Widget:new()
+Grid = Widget:new()
 Grid.__index = Grid
 
 function Grid:new(w, h)
@@ -670,7 +673,7 @@ function Grid:remove_child(x, y)
     GUI.resize = true
 end
 
-local Text = Widget:new()
+Text = Widget:new()
 Text.__index = Text
 
 function Text:new(text)
@@ -745,7 +748,9 @@ function Text:draw()
         y_offset = y_offset - math.ceil(#self.wrapped_text / 2) + 1
     end
 
-    GUI.render:blit_text(shown_text, self.rect.x + x_offset, self.rect.y + y_offset, self.fg_color, self.bg_color)
+    if self.visible then
+        GUI.render:blit_text(shown_text, self.rect.x + x_offset, self.rect.y + y_offset, self.fg_color, self.bg_color)
+    end
 end
 
 function Text:set_text(text)
@@ -756,7 +761,7 @@ function Text:set_text(text)
     end
 end
 
-local Input = Widget:new()
+Input = Widget:new()
 Input.__index = Input
 
 function Input:new(text, hint_text, box_width, hint_color, box_color)
@@ -838,6 +843,10 @@ function Input:handle_event(event, ...)
                 if self.text ~= oldText and self.on_change then
                     self:on_change(oldText)
                 end
+            elseif key == keys.home then
+                self:set_cursor_index(1)
+            elseif key == keys["end"] then
+                self:set_cursor_index(self.text:len() + 1)
             elseif key == keys.left then
                 self:set_cursor_index(self.cursor_index - 1)
             elseif key == keys.right then
@@ -918,15 +927,3 @@ function Input:set_box_color(color)
         GUI.redraw = true
     end
 end
-
-return {
-    colors = colors,
-    colours = colors,
-    util = util,
-    GUI = GUI,
-    Widget = Widget,
-    Frame = Frame,
-    Grid = Grid,
-    Text = Text,
-    Input = Input,
-}
