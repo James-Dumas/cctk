@@ -9,6 +9,14 @@ util = {
         return result
     end,
 
+    round = function(num)
+        if (num + 0.5) % 2 == 1 then
+            return math.floor(num)
+        end
+
+        return math.floor(num + 0.5)
+    end,
+
     wrap_text = function(text, width)
         local lines = {}
         local line = ""
@@ -56,7 +64,50 @@ colors = {
     black = "f",
 }
 
-colours = colors
+border_presets = {
+    ascii = {
+        top = {"-", false},
+        right = {"|", false},
+        bottom = {"-", false},
+        left = {"|", false},
+        top_right = {"+", false},
+        bottom_right = {"+", false},
+        bottom_left = {"+", false},
+        top_left = {"+", false},
+    },
+    diamonds = {
+        top = {"-", false},
+        right = {"|", false},
+        bottom = {"-", false},
+        left = {"|", false},
+        top_right = {"\4", false},
+        bottom_right = {"\4", false},
+        bottom_left = {"\4", false},
+        top_left = {"\4", false},
+    },
+    blocky = {
+        top = {"\131", false},
+        right = {"\149", true},
+        bottom = {"\143", true},
+        left = {"\149", false},
+        top_right = {"\148", true},
+        bottom_right = {"\133", true},
+        bottom_left = {"\138", true},
+        top_left = {"\151", false},
+    },
+    blocky_inset = {
+        top = {"\143", true},
+        right = {"\149", false},
+        bottom = {"\131", false},
+        left = {"\149", true},
+        top_right = {"\144", false},
+        bottom_right = {"\129", false},
+        bottom_left = {"\130", false},
+        top_left = {"\159", true},
+    },
+}
+
+border_presets.default = border_presets.diamonds
 
 GUI = {
     render = {
@@ -116,7 +167,7 @@ function GUI:main()
                 self.resize = false
                 self.redraw = true
                 self.root:update_size_want()
-                term_w, term_h = term.getSize()
+                local term_w, term_h = term.getSize()
                 local screen_rect = {
                     x = 1,
                     y = 1,
@@ -128,7 +179,7 @@ function GUI:main()
 
             if self.redraw then
                 self.redraw = false
-                self.root:draw()
+                self.root:draw(self.render.buf_back)
                 self.render:draw()
             end
 
@@ -144,38 +195,50 @@ end
 
 function GUI.render:draw()
     -- copy back buffer to front buffer and draw changed chars
-    local width, height = term.getSize()
     local cursor_blink = term.getCursorBlink()
     local cursor_x, cursor_y = term.getCursorPos()
     term.setCursorBlink(false)
-    for x = 1, width do
-        for y = 1, height do
-            local key = x .. "." .. y
-            local back_char = self.buf_back[key]
-            local front_char = self.buf_front[key]
-            if back_char and (not front_char or back_char.char ~= front_char.char or back_char.fg ~= front_char.fg or back_char.bg ~= front_char.bg) then
-                term.setCursorPos(x, y)
-                term.blit(back_char.char, back_char.fg, back_char.bg)
-                self.buf_front[key] = back_char
-            end
-        end
-    end
-
+    self:blit_buf(self.buf_back, self.buf_front)
     term.setCursorBlink(cursor_blink)
     term.setCursorPos(cursor_x, cursor_y)
 end
 
-function GUI.render:blit_char(char, x, y, fg, bg)
+function GUI.render:blit_buf(buf_src, buf_dst, min_x, min_y, max_x, max_y)
+    -- copy buf_src to buf_dst within the given rect
+    -- if buf_dst is the render object's front buffer, then blit to term
+    min_x = min_x or 1
+    min_y = min_y or 1
+    local width, height = term.getSize()
+    max_x = max_x or width
+    max_y = max_y or height
+    for x = min_x, max_x do
+        for y = min_y, max_y do
+            local key = x .. "." .. y
+            local src_char = buf_src[key]
+            local dst_char = buf_dst[key]
+            if src_char and (not dst_char or src_char.char ~= dst_char.char or src_char.fg ~= dst_char.fg or src_char.bg ~= dst_char.bg) then
+                if buf_dst == self.buf_front then
+                    term.setCursorPos(x, y)
+                    term.blit(src_char.char, src_char.fg, src_char.bg)
+                end
+
+                buf_dst[key] = src_char
+            end
+        end
+    end
+end
+
+function GUI.render:blit_char(char, x, y, fg, bg, buf)
     -- draw a single char to the render buffer
     local key = x .. "." .. y
-    self.buf_back[key] = {
+    buf[key] = {
         char = char,
         fg = fg or colors.white,
         bg = bg or colors.black,
     }
 end
 
-function GUI.render:blit_text(text, x, y, fg, bg)
+function GUI.render:blit_text(text, x, y, fg, bg, buf)
     -- draw some text to the render buffer
     local h = 0
     local k = 0
@@ -185,19 +248,25 @@ function GUI.render:blit_text(text, x, y, fg, bg)
             k = k + 1
             h = 0
         else
-            self:blit_char(char, x + h, y + k, fg, bg)
+            self:blit_char(char, x + h, y + k, fg, bg, buf)
             h = h + 1
         end
     end
 end
 
-function GUI.render:blit_rect(x, y, w, h, bg)
+function GUI.render:blit_rect(x, y, w, h, bg, buf)
     -- draw a rectangle to the render buffer
     for i = x, x + w - 1 do
         for j = y, y + h - 1 do
-            self:blit_char(" ", i, j, bg, bg)
+            self:blit_char(" ", i, j, bg, bg, buf)
         end
     end
+end
+
+function GUI.render:get_char(x, y)
+    -- get the char at the given position
+    local key = x .. "." .. y
+    return self.buf_front[key]
 end
 
 function GUI.render:clear()
@@ -211,8 +280,8 @@ end
 Widget = {
     visible = true,
     fill_mode = "none",
-    h_align = "center",
-    v_align = "center",
+    h_align = "top",
+    v_align = "left",
     fg_color = colors.white,
     bg_color = nil, -- inherit from parent
     event_handlers = {},
@@ -220,7 +289,7 @@ Widget = {
 Widget.__index = Widget
 
 function Widget:new()
-    o = {}
+    local o = {}
     setmetatable(o, self)
     o.rect = {
         x = 0,
@@ -253,54 +322,56 @@ end
 function Widget:update_rect(available_rect)
     -- update widget rect based on available space and fill mode
 
-    -- use full width
+    -- use all available width
     if self.fill_mode == "full" or self.fill_mode == "horizontal" then
         self.rect.x = available_rect.x
         self.rect.w = available_rect.w
     end
 
-    -- use full height
+    -- use all available height
     if self.fill_mode == "full" or self.fill_mode == "vertical" then
         self.rect.y = available_rect.y
         self.rect.h = available_rect.h
     end
 
-    -- use available width
+    -- use minimum desired width
     if self.fill_mode == "none" or self.fill_mode == "horizontal" then
+        local size_want_h = math.min(self.size_want.h, available_rect.h)
         if self.v_align == "top" then
             self.rect.y = available_rect.y
         elseif self.v_align == "bottom" then
-            self.rect.y = available_rect.y + available_rect.h - self.size_want.h
+            self.rect.y = available_rect.y + available_rect.h - size_want_h
         else
-            self.rect.y = available_rect.y + math.floor((available_rect.h - self.size_want.h) / 2)
+            self.rect.y = available_rect.y + math.floor((available_rect.h - size_want_h) / 2)
         end
-        self.rect.h = self.size_want.h
+        self.rect.h = size_want_h
     end
 
-    -- use available height
+    -- use minimum desired height
     if self.fill_mode == "none" or self.fill_mode == "vertical" then
+        local size_want_w = math.min(self.size_want.w, available_rect.w)
         if self.h_align == "left" then
             self.rect.x = available_rect.x
         elseif self.h_align == "right" then
-            self.rect.x = available_rect.x + available_rect.w - self.size_want.w
+            self.rect.x = available_rect.x + available_rect.w - size_want_w
         else
-            self.rect.x = available_rect.x + math.floor((available_rect.w - self.size_want.w) / 2)
+            self.rect.x = available_rect.x + math.floor((available_rect.w - size_want_w) / 2)
         end
 
-        self.rect.w = self.size_want.w
+        self.rect.w = size_want_w
     end
 end
 
-function Widget:draw()
+function Widget:draw(buf)
     if self.visible then
-        GUI.render:blit_rect(self.rect.x, self.rect.y, self.rect.w, self.rect.h, self.bg_color)
+        GUI.render:blit_rect(self.rect.x, self.rect.y, self.rect.w, self.rect.h, self.bg_color, buf)
     end
 end
 
 function Widget:set_visible(visible)
-    visible = visible or GUI.root == self
-    if self.visible ~= visible then
-        self.visible = visible
+    local is_visible = visible or GUI.root == self
+    if self.visible ~= is_visible then
+        self.visible = is_visible
         GUI.redraw = true
     end
 end
@@ -378,6 +449,15 @@ function Widget:get_widget_by_pos(x, y)
     end
 end
 
+function Widget:get_inner_rect()
+    return {
+        x = self.rect.x + self.padding.left,
+        y = self.rect.y + self.padding.top,
+        w = self.rect.w - self.padding.left - self.padding.right,
+        h = self.rect.h - self.padding.top - self.padding.bottom
+    }
+end
+
 function Widget:handle_click(btn, x, y)
     self:set_focused()
     if self.on_click then
@@ -400,10 +480,12 @@ end
 Frame = Widget:new()
 Frame.__index = Frame
 
-function Frame:new()
-    o = Widget:new()
+function Frame:new(show_border)
+    local o = Widget:new()
     setmetatable(o, self)
     o.super = Widget
+    o.show_border = show_border or false
+    o.border_chars = border_presets.default
     return o
 end
 
@@ -423,22 +505,53 @@ function Frame:update_rect(available_rect)
 
     if self.child then
         -- resize child to fit available space
-        local child_rect = {
-            x = self.rect.x + self.padding.left,
-            y = self.rect.y + self.padding.top,
-            w = self.rect.w - self.padding.left - self.padding.right,
-            h = self.rect.h - self.padding.top - self.padding.bottom
-        }
-
+        local child_rect = self:get_inner_rect()
         self.child:update_rect(child_rect)
     end
 end
 
-function Frame:draw()
-    self.super.draw(self)
+function Frame:draw(buf)
+    self.super.draw(self, buf)
+
+    if self.show_border and self.visible then
+        if self.padding.top > 0 or self.padding.left > 0 then
+            GUI.render:blit_char(self.border_chars.top_left[1], self.rect.x, self.rect.y, (self.border_chars.top_left[2] and self.bg_color) or self.fg_color, (self.border_chars.top_left[2] and self.fg_color) or self.bg_color, buf)
+        end
+        if self.padding.top > 0 or self.padding.right > 0 then
+            GUI.render:blit_char(self.border_chars.top_right[1], self.rect.x + self.rect.w - 1, self.rect.y, (self.border_chars.top_right[2] and self.bg_color) or self.fg_color, (self.border_chars.top_right[2] and self.fg_color) or self.bg_color, buf)
+        end
+        if self.padding.bottom > 0 or self.padding.left > 0 then
+            GUI.render:blit_char(self.border_chars.bottom_left[1], self.rect.x, self.rect.y + self.rect.h - 1, (self.border_chars.bottom_left[2] and self.bg_color) or self.fg_color, (self.border_chars.bottom_left[2] and self.fg_color) or self.bg_color, buf)
+        end
+        if self.padding.bottom > 0 or self.padding.right > 0 then
+            GUI.render:blit_char(self.border_chars.bottom_right[1], self.rect.x + self.rect.w - 1, self.rect.y + self.rect.h - 1, (self.border_chars.bottom_right[2] and self.bg_color) or self.fg_color, (self.border_chars.bottom_right[2] and self.fg_color) or self.bg_color, buf)
+        end
+
+        if self.rect.w > 2 then
+            for i = 1, self.rect.w - 2 do
+                if self.padding.top > 0 then
+                    GUI.render:blit_char(self.border_chars.top[1], self.rect.x + i, self.rect.y, (self.border_chars.top[2] and self.bg_color) or self.fg_color, (self.border_chars.top[2] and self.fg_color) or self.bg_color, buf)
+                end
+                if self.padding.bottom > 0 then
+                    GUI.render:blit_char(self.border_chars.bottom[1], self.rect.x + i, self.rect.y + self.rect.h - 1, (self.border_chars.bottom[2] and self.bg_color) or self.fg_color, (self.border_chars.bottom[2] and self.fg_color) or self.bg_color, buf)
+                end
+            end
+        end
+
+        if self.rect.h > 2 then
+            for i = 1, self.rect.h - 2 do
+                if self.padding.left > 0 then
+                    GUI.render:blit_char(self.border_chars.left[1], self.rect.x, self.rect.y + i, (self.border_chars.left[2] and self.bg_color) or self.fg_color, (self.border_chars.left[2] and self.fg_color) or self.bg_color, buf)
+                end
+                if self.padding.right > 0 then
+                    GUI.render:blit_char(self.border_chars.right[1], self.rect.x + self.rect.w - 1, self.rect.y + i, (self.border_chars.right[2] and self.bg_color) or self.fg_color, (self.border_chars.right[2] and self.fg_color) or self.bg_color, buf)
+                end
+            end
+        end
+    end
 
     if self.child and self.visible then
-        self.child:draw()
+        self.child:draw(buf)
     end
 end
 
@@ -446,6 +559,8 @@ function Frame:get_widget_by_pos(x, y)
     if self.visible and x >= self.rect.x and x <= self.rect.x + self.rect.w and y >= self.rect.y and y <= self.rect.y + self.rect.h then
         if self.child then
             return self.child:get_widget_by_pos(x, y) or self
+        else
+            return self
         end
     end
 end
@@ -468,13 +583,16 @@ end
 
 function Frame:add_child(widget)
     -- add a child widget
-    self.child = widget
-    widget.parent = self
-    if not widget.bg_color then
-        widget.bg_color = self.bg_color
-    end
+    if not self.child then
+        self.child = widget
+        widget.parent = self
+        if not widget.bg_color then
+            widget.bg_color = self.bg_color
+        end
 
-    GUI.resize = true
+        GUI.resize = true
+        return true
+    end
 end
 
 function Frame:get_child()
@@ -486,17 +604,16 @@ function Frame:remove_child()
     if self.child then
         self.child.parent = nil
         self.child = nil
+        GUI.resize = true
         return true
     end
-
-    GUI.resize = true
 end
 
 Grid = Widget:new()
 Grid.__index = Grid
 
 function Grid:new(w, h)
-    o = Widget:new()
+    local o = Widget:new()
     setmetatable(o, self)
     o.super = Widget
     o.grid_size = {
@@ -531,7 +648,7 @@ function Grid:update_size_want()
         for y = 1, self.grid_size.h do
             self.size_want.row_lengths[y] = self.size_want.row_lengths[y] or 0
             self.size_want.row_widths[y] = self.size_want.row_widths[y] or 0
-            key = x .. "." .. y
+            local key = x .. "." .. y
             if self.grid[key] then
                 self.grid[key]:update_size_want()
                 self.size_want.row_lengths[y] = self.size_want.row_lengths[y] + self.grid[key].size_want.w
@@ -562,18 +679,18 @@ function Grid:update_rect(available_rect)
 
     for i, weight in ipairs(self.weights.rows) do
         local weight_norm = weight / util.sum(unpack(self.weights.rows))
-        cell_sizes.rows[i] = self.size_want.row_widths[i] + math.floor(extra_space.h * weight_norm + 0.5)
+        cell_sizes.rows[i] = self.size_want.row_widths[i] + util.round(extra_space.h * weight_norm)
     end
 
     for i, weight in ipairs(self.weights.cols) do
         local weight_norm = weight / util.sum(unpack(self.weights.cols))
-        cell_sizes.cols[i] = self.size_want.col_widths[i] + math.floor(extra_space.w * weight_norm + 0.5)
+        cell_sizes.cols[i] = self.size_want.col_widths[i] + util.round(extra_space.w * weight_norm)
     end
 
     -- assign children the appropriate rects for their row/col position
     for x = 1, self.grid_size.w do
         for y = 1, self.grid_size.h do
-            key = x .. "." .. y
+            local key = x .. "." .. y
             if self.grid[key] then
                 local child_rect = {
                     x = self.rect.x + self.padding.left + util.sum(unpack(cell_sizes.cols, 1, x - 1)),
@@ -588,14 +705,14 @@ function Grid:update_rect(available_rect)
     end
 end
 
-function Grid:draw()
-    self.super.draw(self)
+function Grid:draw(buf)
+    self.super.draw(self, buf)
 
     for x = 1, self.grid_size.w do
         for y = 1, self.grid_size.h do
-            key = x .. "." .. y
+            local key = x .. "." .. y
             if self.grid[key] then
-                self.grid[key]:draw()
+                self.grid[key]:draw(buf)
             end
         end
     end
@@ -605,7 +722,7 @@ function Grid:get_widget_by_pos(x, y)
     if x >= self.rect.x and x <= self.rect.x + self.rect.w and y >= self.rect.y and y <= self.rect.y + self.rect.h then
         for h = 1, self.grid_size.w do
             for k = 1, self.grid_size.h do
-                key = h .. "." .. k
+                local key = h .. "." .. k
                 if self.grid[key] then
                     widget = self.grid[key]:get_widget_by_pos(x, y)
                     if widget then
@@ -624,7 +741,7 @@ function Grid:handle_tick()
 
     for h = 1, self.grid_size.w do
         for k = 1, self.grid_size.h do
-            key = h .. "." .. k
+            local key = h .. "." .. k
             if self.grid[key] then
                 self.grid[key]:handle_tick()
             end
@@ -637,7 +754,7 @@ function Grid:handle_event(event, ...)
 
     for h = 1, self.grid_size.w do
         for k = 1, self.grid_size.h do
-            key = h .. "." .. k
+            local key = h .. "." .. k
             if self.grid[key] then
                 self.grid[key]:handle_event(event, ...)
             end
@@ -647,16 +764,18 @@ end
 
 function Grid:add_child(widget, x, y)
     if x > 0 and x <= self.grid_size.w and y > 0 and y <= self.grid_size.h then
-        self.grid[x .. "." .. y] = widget
-        widget.parent = self
-        if not widget.bg_color then
-            widget.bg_color = self.bg_color
+        local key = x .. "." .. y
+        if not self.grid[key] then
+            self.grid[key] = widget
+            widget.parent = self
+            if not widget.bg_color then
+                widget.bg_color = self.bg_color
+            end
+
+            GUI.resize = true
+            return true
         end
-
-        return true
     end
-
-    GUI.resize = true
 end
 
 function Grid:get_child(x, y)
@@ -664,98 +783,98 @@ function Grid:get_child(x, y)
 end
 
 function Grid:remove_child(x, y)
-    key = x .. "." .. y
+    local key = x .. "." .. y
     if self.grid[key] then
         self.grid[key].parent = nil
         self.grid[key] = nil
+        GUI.resize = true
+        return true
     end
-
-    GUI.resize = true
 end
 
 Text = Widget:new()
 Text.__index = Text
 
-function Text:new(text)
-    o = Widget:new()
+function Text:new(text, text_align)
+    local o = Widget:new()
     setmetatable(o, self)
     o.super = Widget
-    o.text = text or ""
-    o.text_align = "center"
-    o.text_changed = false
+    o.text = ""
+    o.text_align = text_align or "left"
     o.wrapping = true
+    o.text_changed = false
+    o.lines = {}
+    o.max_len = 0
+    o.wrapped_lines = {}
+    o.wrapped_max_len = 0
+    o:set_text(text or "")
     return o
 end
 
 function Text:update_size_want()
     -- recalculate wanted size for the widget
-    local max_len = self.text:len()
-    if self.wrapped_text then
-        max_len = 0
-        for i, line in ipairs(self.wrapped_text) do
-            if line:len() > max_len then
-                max_len = line:len()
-            end
-        end
-    end
-
-    self.size_want.w = max_len + self.padding.left + self.padding.right
-    self.size_want.h = self.padding.top + self.padding.bottom + (self.wrapped_text and #self.wrapped_text or 1)
+    self.size_want.w = self.max_len + self.padding.left + self.padding.right
+    self.size_want.h = self.padding.top + self.padding.bottom + ((#self.wrapped_lines > 0 and #self.wrapped_lines) or ((#self.lines > 0 and #self.lines) or 1))
 end
 
 function Text:update_rect(available_rect)
+    if self.rect.w ~= available_rect.w then
+        self.text_changed = true
+    end
+
     self.super.update_rect(self, available_rect)
 
     if self.text_changed then
         self.text_changed = false
         GUI.resize = true
-        if self.wrapping and self.text:len() + self.padding.left + self.padding.right > available_rect.w then
-            self.wrapped_text = util.wrap_text(self.text, available_rect.w - self.padding.left - self.padding.right)
-        else
-            self.wrapped_text = nil
+
+        self.wrapped_lines = {}
+        self.wrapped_max_len = 0
+        if self.wrapping and self.max_len + self.padding.left + self.padding.right > available_rect.w then
+            for i, line in ipairs(self.lines) do
+                local wrapped_lines = util.wrap_text(line, available_rect.w - self.padding.left - self.padding.right)
+                for j, wrapped_line in ipairs(wrapped_lines) do
+                    self.wrapped_max_len = math.max(self.wrapped_max_len, wrapped_line:len())
+                    table.insert(self.wrapped_lines, wrapped_line)
+                end
+            end
         end
     end
 end
 
-function Text:draw()
-    o.super.draw(self)
-
-    local x_offset = 0
-    local y_offset = self.padding.top + math.floor((self.rect.h - self.padding.top - self.padding.bottom - 1) / 2)
-    if self.text_align == "left" then
-        x_offset = self.padding.left
-    elseif self.text_align == "right" then
-        x_offset = self.rect.w - self.text:len() - self.padding.right + 1
-    else
-        x_offset = self.padding.left + math.floor((self.rect.w - self.padding.left - self.padding.right - self.text:len()) / 2)
-    end
-
-    local shown_text = self.text
-    if self.wrapped_text then
-        x_offset = self.padding.left
-        shown_text = ""
-        for i, line in ipairs(self.wrapped_text) do
-            local spacing = ""
-            if self.text_align == "right" then
-                spacing = string.rep(" ", self.rect.w - self.padding.left - self.padding.right - line:len())
-            elseif self.text_align == "center" then
-                spacing = string.rep(" ", math.floor((self.rect.w - self.padding.left - self.padding.right - line:len()) / 2) - 1)
-            end
-
-            shown_text = shown_text .. spacing .. line .. "\n"
-        end
-
-        y_offset = y_offset - math.ceil(#self.wrapped_text / 2) + 1
-    end
+function Text:draw(buf)
+    self.super.draw(self, buf)
 
     if self.visible then
-        GUI.render:blit_text(shown_text, self.rect.x + x_offset, self.rect.y + y_offset, self.fg_color, self.bg_color)
+        local text_buf = {}
+        for i, line in ipairs((#self.wrapped_lines > 0 and self.wrapped_lines) or self.lines) do
+            local x_offset
+            local y_offset = self.padding.top + i - 1
+            if self.text_align == "left" then
+                x_offset = self.padding.left
+            elseif self.text_align == "right" then
+                x_offset = self.rect.w - line:len() - self.padding.right + 1
+            else
+                x_offset = self.padding.left + math.floor((self.rect.w - self.padding.left - self.padding.right - line:len()) / 2)
+            end
+
+            GUI.render:blit_text(line, self.rect.x + x_offset, self.rect.y + y_offset, self.fg_color, self.bg_color, text_buf)
+        end
+
+        local text_container_rect = self:get_inner_rect()
+        GUI.render:blit_buf(text_buf, buf, text_container_rect.x, text_container_rect.y, text_container_rect.x + text_container_rect.w - 1, text_container_rect.y + text_container_rect.h - 1)
     end
 end
 
 function Text:set_text(text)
     if self.text ~= text then
         self.text = text
+        self.lines = {}
+        self.max_len = 0
+        for line in self.text:gmatch("([^\n]*)\n?") do
+            self.max_len = math.max(self.max_len, line:len())
+            table.insert(self.lines, line)
+        end
         self.text_changed = true
         GUI.resize = true
     end
@@ -765,7 +884,7 @@ Input = Widget:new()
 Input.__index = Input
 
 function Input:new(text, hint_text, box_width, hint_color, box_color)
-    o = Widget:new()
+    local o = Widget:new()
     setmetatable(o, self)
     o.super = Widget
     o.text = text or ""
@@ -792,16 +911,16 @@ function Input:update_rect(available_rect)
     end
 end
 
-function Input:draw()
-    o.super.draw(self)
+function Input:draw(buf)
+    self.super.draw(self, buf)
 
     local actual_box_width = self.rect.w - self.padding.left - self.padding.right
     local y_offset = self.padding.top + math.floor((self.rect.h - self.padding.top - self.padding.bottom - 1) / 2)
 
     local shown_text = self.text:len() > 0 and self.text:sub(self.scroll) or self.hint_text
     local text_color = self.text:len() > 0 and self.fg_color or self.hint_color
-    GUI.render:blit_rect(self.rect.x + self.padding.left, self.rect.y + y_offset, actual_box_width, 1, self.box_color)
-    GUI.render:blit_text(shown_text:sub(1, actual_box_width), self.rect.x + self.padding.left, self.rect.y + y_offset, text_color, self.box_color)
+    GUI.render:blit_rect(self.rect.x + self.padding.left, self.rect.y + y_offset, actual_box_width, 1, self.box_color, buf)
+    GUI.render:blit_text(shown_text:sub(1, actual_box_width), self.rect.x + self.padding.left, self.rect.y + y_offset, text_color, self.box_color, buf)
 end
 
 function Input:set_focused()
@@ -925,5 +1044,284 @@ function Input:set_box_color(color)
     if self.box_color ~= color then
         self.box_color = color
         GUI.redraw = true
+    end
+end
+
+Scrollable = Widget:new()
+Scrollable.__index = Scrollable
+
+scrollbar_chars = {
+    vertical = {
+        default = {
+            full = {"\149", true},
+            top1 = {"\159", true},
+            top2 = {"\151", true},
+            bottom1 = {"\130", false},
+            bottom2 = {"\138", false},
+        },
+        flipped = {
+            full = {"\149", false},
+            top1 = {"\144", false},
+            top2 = {"\148", false},
+            bottom1 = {"\129", false},
+            bottom2 = {"\133", false},
+        },
+    },
+    horizontal = {
+        default = {
+            full = {"\143", true},
+            left = {"\159", true},
+            right = {"\144", false},
+        },
+        flipped = {
+            full = {"\131", false},
+            left = {"\130", false},
+            right = {"\129", false},
+        },
+    },
+}
+
+function Scrollable:new(min_size, scroll_dir, show_scrollbar, flip_scrollbar_side)
+    local o = Widget:new()
+    setmetatable(o, self)
+    o.super = Widget
+    o.scroll = 1
+    o.scroll_max = 1
+    o.min_size = min_size or 10
+    o.scroll_dir = scroll_dir or "vertical"
+    o.show_scrollbar = show_scrollbar or true
+    o.flip_scrollbar_side = flip_scrollbar_side or false
+    return o
+end
+
+function Scrollable:update_size_want()
+    if self.child then
+        self.child:update_size_want()
+        self.size_want.w = self.child.size_want.w + self.padding.left + self.padding.right
+        self.size_want.h = self.child.size_want.h + self.padding.top + self.padding.bottom
+    else
+        self.size_want.w = self.padding.left + self.padding.right
+        self.size_want.h = self.padding.top + self.padding.bottom
+    end
+
+    if self.scroll_dir == "vertical" then
+        if self.show_scrollbar then
+            self.size_want.w = self.size_want.w + 1
+        end
+        self.size_want.h = self.min_size
+    elseif self.scroll_dir == "horizontal" then
+        if self.show_scrollbar then
+            self.size_want.h = self.size_want.h + 1
+        end
+        self.size_want.w = self.min_size
+    end
+end
+
+function Scrollable:update_rect(available_rect)
+    self.super.update_rect(self, available_rect)
+
+    if self.child then
+        -- resize child to fit available space
+        local child_rect_space = self:get_inner_rect()
+
+        local child_rect = {}
+        if self.scroll_dir == "vertical" then
+            child_rect.x = child_rect_space.x + (self.show_scrollbar and self.flip_scrollbar_side and 1 or 0)
+            child_rect.y = child_rect_space.y - self.scroll + 1
+            child_rect.w = child_rect_space.w - (self.show_scrollbar and 1 or 0)
+            child_rect.h = math.max(self.child.size_want.h, child_rect_space.h)
+            self.scroll_max = math.max(1, child_rect.h - child_rect_space.h + 1)
+        elseif self.scroll_dir == "horizontal" then
+            child_rect.x = child_rect_space.x - self.scroll + 1
+            child_rect.y = child_rect_space.y + (self.show_scrollbar and self.flip_scrollbar_side and 1 or 0)
+            child_rect.w = math.max(self.child.size_want.w, child_rect_space.w)
+            child_rect.h = child_rect_space.h - (self.show_scrollbar and 1 or 0)
+            self.scroll_max = math.max(1, child_rect.w - child_rect_space.w + 1)
+        else
+            child_rect = child_rect_space
+        end
+
+        self.scroll = math.max(1, math.min(self.scroll_max, self.scroll))
+        self.child:update_rect(child_rect)
+    end
+end
+
+function Scrollable:draw(buf)
+    self.super.draw(self, buf)
+
+    if self.child and self.visible then
+        local child_visible_rect = self:get_inner_rect()
+
+        if self.show_scrollbar then
+            if self.scroll_dir == "vertical" then
+                child_visible_rect.w = child_visible_rect.w - 1
+                if self.flip_scrollbar_side then
+                    child_visible_rect.x = child_visible_rect.x + 1
+                end
+            elseif self.scroll_dir == "horizontal" then
+                child_visible_rect.h = child_visible_rect.h - 1
+                if self.flip_scrollbar_side then
+                    child_visible_rect.y = child_visible_rect.y + 1
+                end
+            end
+        end
+
+        local child_buf = {}
+        self.child:draw(child_buf)
+        GUI.render:blit_buf(child_buf, buf, child_visible_rect.x, child_visible_rect.y, child_visible_rect.x + child_visible_rect.w - 1, child_visible_rect.y + child_visible_rect.h - 1)
+
+        if self.show_scrollbar and self.scroll_max > 1 then
+            if self.scroll_dir == "vertical" then
+                local scrollbar_space = child_visible_rect.h * 3
+                local scrollbar_height = scrollbar_space - self.scroll_max + 1
+                local scrollbar_offset = 0
+                if scrollbar_height < 3 then
+                    scrollbar_height = 3
+                    scrollbar_offset = math.floor((self.scroll / self.scroll_max) * (scrollbar_space - 3))
+                else
+                    scrollbar_offset = self.scroll - 1
+                end
+
+                scrollbar_charset = scrollbar_chars[self.scroll_dir][self.flip_scrollbar_side and "flipped" or "default"]
+                local x = child_visible_rect.x + (not self.flip_scrollbar_side and child_visible_rect.w or -1)
+                for y = child_visible_rect.y, child_visible_rect.y + child_visible_rect.h - 1 do
+                    local render_char = nil
+                    if scrollbar_offset >= 3 then
+                        scrollbar_offset = scrollbar_offset - 3
+                    elseif scrollbar_offset == 2 then
+                        render_char = scrollbar_charset.top1
+                        scrollbar_offset = 0
+                        scrollbar_height = scrollbar_height - 1
+                    elseif scrollbar_offset == 1 then
+                        render_char = scrollbar_charset.top2
+                        scrollbar_offset = 0
+                        scrollbar_height = scrollbar_height - 2
+                    else
+                        if scrollbar_height >= 3 then
+                            render_char = scrollbar_charset.full
+                            scrollbar_height = scrollbar_height - 3
+                        elseif scrollbar_height == 2 then
+                            render_char = scrollbar_charset.bottom2
+                            scrollbar_height = 0
+                        elseif scrollbar_height == 1 then
+                            render_char = scrollbar_charset.bottom1
+                            scrollbar_height = 0
+                        end
+                    end
+
+                    if render_char then
+                        GUI.render:blit_char(render_char[1], x, y, render_char[2] and self.bg_color or self.fg_color, render_char[2] and self.fg_color or self.bg_color, buf)
+                    end
+                end
+            elseif self.scroll_dir == "horizontal" then
+                local scrollbar_space = child_visible_rect.w * 2
+                local scrollbar_width = scrollbar_space - self.scroll_max + 1
+                local scrollbar_offset = 0
+                if scrollbar_width < 2 then
+                    scrollbar_width = 2
+                    scrollbar_offset = math.floor((self.scroll / self.scroll_max) * (scrollbar_space - 2))
+                else
+                    scrollbar_offset = self.scroll - 1
+                end
+
+                scrollbar_charset = scrollbar_chars[self.scroll_dir][self.flip_scrollbar_side and "flipped" or "default"]
+                local y = child_visible_rect.y + (not self.flip_scrollbar_side and child_visible_rect.h or -1)
+                for x = child_visible_rect.x, child_visible_rect.x + child_visible_rect.w - 1 do
+                    local render_char = nil
+                    if scrollbar_offset >= 2 then
+                        scrollbar_offset = scrollbar_offset - 2
+                    elseif scrollbar_offset == 1 then
+                        render_char = scrollbar_charset.left
+                        scrollbar_offset = 0
+                        scrollbar_width = scrollbar_width - 1
+                    else
+                        if scrollbar_width >= 2 then
+                            render_char = scrollbar_charset.full
+                            scrollbar_width = scrollbar_width - 2
+                        elseif scrollbar_width == 1 then
+                            render_char = scrollbar_charset.right
+                            scrollbar_width = 0
+                        end
+                    end
+
+                    if render_char then
+                        GUI.render:blit_char(render_char[1], x, y, render_char[2] and self.bg_color or self.fg_color, render_char[2] and self.fg_color or self.bg_color, buf)
+                    end
+                end
+            end
+        end
+    end
+end
+
+function Scrollable:set_scroll(scroll)
+    local prev_scroll = self.scroll
+    self.scroll = math.max(1, math.min(self.scroll_max, scroll))
+    if self.scroll ~= prev_scroll then
+        GUI.resize = true
+        return true
+    end
+end
+
+function Scrollable:handle_event(event, ...)
+    self.super.handle_event(self, event, ...)
+
+    if event == "mouse_scroll" then
+        local dir, x, y = ...
+        if self:get_widget_by_pos(x, y) == self then
+            local scrolled = self:set_scroll(self.scroll + dir)
+            if not scrolled and self.child then
+                self.child:handle_event(event, ...)
+            end
+        end
+    else
+        if self.child then
+            self.child:handle_event(event, ...)
+        end
+    end
+end
+
+function Scrollable:get_widget_by_pos(x, y)
+    if self.visible and x >= self.rect.x and x <= self.rect.x + self.rect.w and y >= self.rect.y and y <= self.rect.y + self.rect.h then
+        if self.child then
+            return self.child:get_widget_by_pos(x, y) or self
+        else
+            return self
+        end
+    end
+end
+
+function Scrollable:handle_tick()
+    self.super.handle_tick(self)
+
+    if self.child then
+        self.child:handle_tick()
+    end
+end
+
+function Scrollable:add_child(widget)
+    -- add a child widget
+    if not self.child then
+        self.child = widget
+        widget.parent = self
+        if not widget.bg_color then
+            widget.bg_color = self.bg_color
+        end
+
+        GUI.resize = true
+        return true
+    end
+end
+
+function Scrollable:get_child()
+    return self.child
+end
+
+function Scrollable:remove_child()
+    -- remove child widget
+    if self.child then
+        self.child.parent = nil
+        self.child = nil
+        GUI.resize = true
+        return true
     end
 end
